@@ -1,3 +1,465 @@
-﻿{% extends "base.html" %}{% block title %}{{ assessment.title }} Â· TalentLens{% endblock %}{% block content %}<section class="testwrap"><header class="testtop"><div><div class="brand">Talent<span>Lens</span></div><h1>{{ assessment.title }}</h1><div class="testmeta">Candidate: {{ attempt.candidate_name }} Â· {{ (attempt.question_number+1) if q else attempt.question_number }} of {{ assessment.question_count }}</div></div><div class="timer" id="timer" aria-label="Time remaining" data-seconds="{{ remaining or 0 }}">--:--</div></header><div class="progress" aria-label="Overall examination progress"><span style="width:{{ (attempt.question_number/assessment.question_count*100)|int }}%"></span></div><div class="exam-section-tabs" aria-label="Assessment sections">{% for item in sections %}<div class="exam-section-tab {{ 'active' if item.active else ('done' if item.answered>=item.question_count else '') }}"><b>{{ item.name }}</b><small>{{ item.answered }}/{{ item.question_count }} answered</small></div>{% endfor %}</div>{% if q %}<div class="exam-grid"><section class="exam-card"><div class="question-meta"><span class="badge">{{ q.section_name }}</span><span>{{ q.topic }} Â· {{ q.concept }}</span><span>Level {{ q.difficulty }}</span></div><div class="exam-question-count">Question {{ q.section_question_number }} in {{ q.section_name }}</div><h2 class="question" id="question-content">{{ q.question }}</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="question_id" value="{{ q.id }}"><div class="options">{% for option in q.options %}<label class="option"><input type="radio" name="answer" value="{{ option }}" required><span>{{ option }}</span></label>{% endfor %}</div><button class="btn">Save answer and continue</button></form></section><aside class="exam-card palette"><h3>Examination progress</h3><p class="palette-note">Questions are completed in section order. Answers are saved when submitted.</p><div class="question-palette">{% for item in sections %}<div class="palette-section"><b>{{ item.name }}</b><div class="palette-grid">{% for n in range(1,item.question_count+1) %}<span class="palette-number {% if item.active and n==q.section_question_number %}current{% elif n<=item.answered %}answered{% endif %}">{{ n }}</span>{% endfor %}</div></div>{% endfor %}</div><div class="legend"><span><i class="dot current"></i>Current</span><span><i class="dot answered"></i>Answered</span><span><i class="dot"></i>Not visited</span></div></aside></div>{% else %}<div class="empty"><h2>Question generation paused</h2><p>Your previous answers are saved. Retry to request a new AI-generated question.</p><form method="post" action="{{ url_for('retry_question') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn">Retry question generation</button></form></div>{% endif %}</section><script>const el=document.getElementById('timer');let s=Number(el.dataset.seconds);function tick(){let m=Math.floor(s/60),r=s%60;el.textContent=String(m).padStart(2,'0')+':'+String(r).padStart(2,'0');if(s>0)s--;else if(s===0)location.reload()}tick();setInterval(tick,1000);
-const question=document.getElementById('question-content');if(question){const raw=question.textContent;const fence=/```([\w+#.-]*)\s*\n?([\s\S]*?)```/g;let match,last=0,parts=[];while((match=fence.exec(raw))){if(match.index>last)parts.push(document.createTextNode(raw.slice(last,match.index)));const pre=document.createElement('pre'),code=document.createElement('code');pre.className='code-block';if(match[1])code.className='language-'+match[1].toLowerCase();code.textContent=match[2].replace(/^\n|\n$/g,'');pre.append(code);parts.push(pre);last=fence.lastIndex}if(parts.length){if(last<raw.length)parts.push(document.createTextNode(raw.slice(last)));question.replaceChildren(...parts)}}document.addEventListener('DOMContentLoaded',()=>window.Prism?.highlightAll());</script>{% endblock %}
+﻿
+{% extends "base.html" %}
 
+{% block title %}{{ assessment.title }} · TalentLens{% endblock %}
+
+{% block content %}
+
+<section class="testwrap">
+
+    <!-- Examination Header -->
+    <header class="testtop">
+        <div>
+            <div class="brand">Talent<span>Lens</span></div>
+
+            <h1>{{ assessment.title }}</h1>
+
+            <div class="testmeta">
+                Candidate: {{ attempt.candidate_name }}
+                ·
+                {{ (attempt.question_number + 1) if q else attempt.question_number }}
+                of {{ assessment.question_count }}
+            </div>
+        </div>
+
+        <div
+            class="timer"
+            id="timer"
+            aria-label="Time remaining"
+            data-seconds="{{ remaining or 0 }}"
+        >
+            --:--
+        </div>
+    </header>
+
+    <!-- Overall Progress -->
+    <div class="progress" aria-label="Overall examination progress">
+        <span style="width: {{ (attempt.question_number / assessment.question_count * 100)|int if assessment.question_count else 0 }}%"></span>
+    </div>
+
+    <!-- Section Navigation -->
+    <div class="exam-section-tabs" aria-label="Assessment sections">
+        {% for item in sections %}
+            <div class="exam-section-tab
+                {{ 'active' if item.active else ('done' if item.answered >= item.question_count else '') }}">
+
+                <b>{{ item.name }}</b>
+
+                <small>
+                    {{ item.answered }}/{{ item.question_count }} answered
+                </small>
+
+            </div>
+        {% endfor %}
+    </div>
+
+    {% if q %}
+
+    <div class="exam-grid">
+
+        <!-- Question Area -->
+        <section class="exam-card">
+
+            <div class="question-meta">
+
+                <span class="badge">
+                    {{ q.section_name }}
+                </span>
+
+                <span>
+                    {{ q.topic }} · {{ q.concept }}
+                </span>
+
+                <span>
+                    Level {{ q.difficulty }}
+                </span>
+
+            </div>
+
+            <div class="exam-question-count">
+                Question {{ q.section_question_number }}
+                in {{ q.section_name }}
+            </div>
+
+            <!-- Question Content -->
+            <h2 class="question" id="question-content">{{ q.question }}</h2>
+
+            <!-- Answer Form -->
+            <form method="post" id="answer-form">
+
+                <input
+                    type="hidden"
+                    name="csrf_token"
+                    value="{{ csrf_token() }}"
+                >
+
+                <input
+                    type="hidden"
+                    name="question_id"
+                    value="{{ q.id }}"
+                >
+
+                <div class="options">
+
+                    {% for option in q.options %}
+
+                    <label class="option">
+
+                        <!-- Submit option INDEX instead of full text -->
+                        <input
+                            type="radio"
+                            name="answer"
+                            value="{{ loop.index0 }}"
+                            required
+                        >
+
+                        <span>{{ option }}</span>
+
+                    </label>
+
+                    {% endfor %}
+
+                </div>
+
+                <button class="btn" type="submit" id="submit-answer">
+                    Save answer and continue
+                </button>
+
+            </form>
+
+        </section>
+
+        <!-- Examination Sidebar -->
+        <aside class="exam-card palette">
+
+            <h3>Examination progress</h3>
+
+            <p class="palette-note">
+                Questions are completed in section order.
+                Answers are saved when submitted.
+            </p>
+
+            <div class="question-palette">
+
+                {% for item in sections %}
+
+                <div class="palette-section">
+
+                    <b>{{ item.name }}</b>
+
+                    <div class="palette-grid">
+
+                        {% for n in range(1, item.question_count + 1) %}
+
+                        <span class="palette-number
+                            {% if item.active and n == q.section_question_number %}
+                                current
+                            {% elif n <= item.answered %}
+                                answered
+                            {% endif %}">
+
+                            {{ n }}
+
+                        </span>
+
+                        {% endfor %}
+
+                    </div>
+
+                </div>
+
+                {% endfor %}
+
+            </div>
+
+            <div class="legend">
+
+                <span>
+                    <i class="dot current"></i>
+                    Current
+                </span>
+
+                <span>
+                    <i class="dot answered"></i>
+                    Answered
+                </span>
+
+                <span>
+                    <i class="dot"></i>
+                    Not visited
+                </span>
+
+            </div>
+
+        </aside>
+
+    </div>
+
+    {% else %}
+
+    <!-- Question Generation Error -->
+    <div class="empty">
+
+        <h2>Question generation paused</h2>
+
+        <p>
+            Your previous answers are saved.
+            Retry to request a new AI-generated question.
+        </p>
+
+        <form method="post" action="{{ url_for('retry_question') }}">
+
+            <input
+                type="hidden"
+                name="csrf_token"
+                value="{{ csrf_token() }}"
+            >
+
+            <button class="btn" type="submit">
+                Retry question generation
+            </button>
+
+        </form>
+
+    </div>
+
+    {% endif %}
+
+</section>
+
+
+<!-- Examination JavaScript -->
+<script>
+
+(function () {
+
+    "use strict";
+
+    // ----------------------------------
+    // Countdown Timer
+    // ----------------------------------
+
+    const timer = document.getElementById("timer");
+
+    if (timer) {
+
+        let seconds = Math.max(
+            0,
+            Number(timer.dataset.seconds) || 0
+        );
+
+        function updateTimer() {
+
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = seconds % 60;
+
+            timer.textContent =
+                String(minutes).padStart(2, "0") +
+                ":" +
+                String(remainingSeconds).padStart(2, "0");
+
+            if (seconds <= 0) {
+                timer.textContent = "00:00";
+                window.location.reload();
+                return;
+            }
+
+            seconds--;
+
+        }
+
+        updateTimer();
+
+        window.setInterval(updateTimer, 1000);
+
+    }
+
+
+    // ----------------------------------
+    // Answer Selection Styling
+    // ----------------------------------
+
+    const options = document.querySelectorAll(
+        '.options input[type="radio"]'
+    );
+
+    function updateSelectedOption() {
+
+        options.forEach(function (radio) {
+
+            const label = radio.closest(".option");
+
+            if (label) {
+                label.classList.toggle(
+                    "selected",
+                    radio.checked
+                );
+            }
+
+        });
+
+    }
+
+    options.forEach(function (radio) {
+
+        radio.addEventListener(
+            "change",
+            updateSelectedOption
+        );
+
+    });
+
+    updateSelectedOption();
+
+
+    // ----------------------------------
+    // Prevent Empty Submission
+    // ----------------------------------
+
+    const form = document.getElementById("answer-form");
+
+    if (form) {
+
+        form.addEventListener("submit", function (event) {
+
+            const selected = form.querySelector(
+                'input[name="answer"]:checked'
+            );
+
+            if (!selected) {
+                event.preventDefault();
+                alert("Please select an answer before continuing.");
+                return;
+            }
+
+            const button = document.getElementById("submit-answer");
+
+            if (button) {
+                button.disabled = true;
+                button.textContent = "Saving answer...";
+            }
+
+        });
+
+    }
+
+
+    // ----------------------------------
+    // Code Block Formatting
+    // ----------------------------------
+
+    const question = document.getElementById(
+        "question-content"
+    );
+
+    if (question) {
+
+        const raw = question.textContent || "";
+
+        const fence = /```([\w+#.-]*)[ \t]*\r?\n([\s\S]*?)```/g;
+
+        let match;
+        let lastIndex = 0;
+
+        const parts = [];
+
+        while ((match = fence.exec(raw)) !== null) {
+
+            // Preserve normal question text.
+            if (match.index > lastIndex) {
+
+                parts.push(
+                    document.createTextNode(
+                        raw.slice(lastIndex, match.index)
+                    )
+                );
+
+            }
+
+            // Create safe code elements.
+            const pre = document.createElement("pre");
+            const code = document.createElement("code");
+
+            pre.className = "code-block";
+
+            const language = (
+                match[1] || "none"
+            ).toLowerCase();
+
+            const supportedLanguages = [
+                "python",
+                "py",
+                "java",
+                "c",
+                "cpp",
+                "c++",
+                "javascript",
+                "js",
+                "sql",
+                "html",
+                "css"
+            ];
+
+            if (supportedLanguages.includes(language)) {
+
+                const normalizedLanguage = {
+                    "py": "python",
+                    "js": "javascript",
+                    "c++": "cpp"
+                }[language] || language;
+
+                code.className =
+                    "language-" + normalizedLanguage;
+
+            }
+
+            // textContent prevents HTML/script injection.
+            code.textContent = match[2].replace(/^\r?\n|\r?\n$/g, "");
+
+            pre.appendChild(code);
+
+            parts.push(pre);
+
+            lastIndex = fence.lastIndex;
+
+        }
+
+        // Only replace content when fenced code exists.
+        if (parts.some(function (part) {
+            return part.nodeType === Node.ELEMENT_NODE;
+        })) {
+
+            if (lastIndex < raw.length) {
+
+                parts.push(
+                    document.createTextNode(
+                        raw.slice(lastIndex)
+                    )
+                );
+
+            }
+
+            question.replaceChildren(...parts);
+
+            // Apply Prism syntax highlighting.
+            if (window.Prism) {
+
+                question
+                    .querySelectorAll("pre code[class*='language-']")
+                    .forEach(function (code) {
+
+                        window.Prism.highlightElement(code);
+
+                    });
+
+            }
+
+        }
+
+    }
+
+})();
+
+</script>
+
+{% endblock %}
