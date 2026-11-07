@@ -4,4 +4,3 @@ Flask-Login>=0.6,<1
 Flask-WTF>=1.2,<2
 openai>=1.50
 python-dotenv>=1.0
-gunicorn
