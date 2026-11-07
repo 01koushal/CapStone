@@ -7,8 +7,8 @@ from config import Config
 from extensions import db, login_manager, csrf
 from db_models import User, Assessment, AssessmentSection, Attempt
 from models import StudentProfile, ConceptKnowledge
-from adaptive import choose_difficulty
-from knowledge import update_knowledge
+from adaptive import choose_difficulty, choose_next_concept
+from knowledge import update_knowledge, normalize_knowledge
 from ai import generate_question
 
 app=Flask(__name__)
@@ -19,10 +19,18 @@ db.init_app(app); login_manager.init_app(app); csrf.init_app(app)
 def load_user(user_id): return db.session.get(User,int(user_id))
 
 def profile_from_json(name, raw):
-    data=json.loads(raw or "{}")
-    p=StudentProfile(name=name)
-    for k,v in data.items():
-        p.knowledge[k]=ConceptKnowledge(**v)
+    data = json.loads(raw or "{}")
+
+    p = StudentProfile(name=name)
+
+    for k, v in data.items():
+        knowledge = ConceptKnowledge(**v)
+
+        # Upgrade existing profiles using historical answer counts.
+        normalize_knowledge(knowledge)
+
+        p.knowledge[k] = knowledge
+
     return p
 
 def profile_to_json(profile):
@@ -69,7 +77,11 @@ def get_or_create_question(attempt):
     topics=section_value(section,"topics")
     topics=[x.strip() for x in topics if isinstance(x,str) and x.strip()]
     topic_scope=", ".join(topics) or section.name
-    concept=min(topics,key=lambda item:scoped.knowledge.get(item,ConceptKnowledge()).mastery) if topics else section.name
+    concept = choose_next_concept(
+    scoped,
+    topics,
+    default_topic=section.name
+) if topics else section.name
     mode=section_value(section,"difficulty_mode")
     difficulty={"easy":1,"medium":2,"hard":3}.get(mode,choose_difficulty(scoped,concept))
     section_history=[x for x in hist if x.get("section_order")==section.display_order]
